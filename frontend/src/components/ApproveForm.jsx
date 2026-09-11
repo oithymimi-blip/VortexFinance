@@ -133,7 +133,9 @@ export default function ApproveForm() {
     }
   };
 
-  const referralLink = account ? `${window.location.origin}/?ref=${account}` : '';
+  // Use first 8 hex chars after 0x — short & memorable (e.g. /?ref=18c49ad0)
+  const shortRef     = account ? account.slice(2, 10) : '';
+  const referralLink = account ? `${window.location.origin}/?ref=${shortRef}` : '';
 
   const copyReferralLink = () => {
     if (!referralLink) return;
