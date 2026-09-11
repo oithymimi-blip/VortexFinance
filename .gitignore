@@ -2,12 +2,13 @@
 node_modules
 **/node_modules
 
-# Environment variables
+# Environment variables — NEVER commit secrets
 .env
 .env.*
 *.env
 backend/.env
 frontend/.env
+vercel.env
 !.env.example
 !backend/.env.example
 
@@ -16,6 +17,12 @@ dist
 build
 .vercel
 .cache
+
+# Contract deploy artifacts (contain bytecode, no secrets)
+contracts/artifacts/
+
+# Deploy & verify scripts (not needed in prod)
+scripts/
 
 # Logs & data locks
 *.log

